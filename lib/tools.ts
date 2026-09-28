@@ -3,6 +3,7 @@ import { z } from "zod";
 import { start } from "workflow/api";
 import { returnFlow } from "./workflows/return-flow";
 import { ApiRequestError, createReturn, getBackOfficeReturns, getBackOfficeSales, getBackOfficeStock, getBackOfficeSupportTickets, getCategories, getOrder, getProductById, getProductStock, getProducts, preauthorizeRefund, notifyReturnInProcess } from "@/lib/api";
+import { getSandbox } from "@/lib/sandbox";
 
 export const searchProducts = tool({
     description: `Search the Vercel swag store product catalog. Use this whenever the user asks about products, what the store sells, or wants recommendations. Optionally narrow results to a single category.`,
@@ -293,6 +294,39 @@ export const getSalesAnalytics = tool({
             const message =
                 err instanceof ApiRequestError ? err.message : "Unknown error";
             return { count: 0, sales: [], error: message };
+        }
+    },
+});
+
+export const bash = tool({
+    description: `Run a shell command in a persistent sandbox environment. Use this for
+multi-step computation that would be unreliable to do by reasoning alone — aggregations,
+ratio calculations, joining data across multiple tool results, or anything involving more
+than ~10 rows of arithmetic.
+
+Workflow:
+1. Write data to /tmp as JSON using a heredoc (e.g. echo '...' > /tmp/data.json)
+2. Run a Python script to compute the result (always use python3, never python)
+3. Print a clean, human-readable result
+
+All currency values from the API are in cents — divide by 100 for dollar amounts.
+Standard library only; no pip installs.`,
+    inputSchema: z.object({
+        command: z.string().describe("The shell command to execute in the sandbox"),
+    }),
+    execute: async ({ command }) => {
+        "use step";
+        try {
+            const sandbox = await getSandbox();
+            const result = await sandbox.runCommand("bash", ["-lc", command]);
+            return {
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exitCode: result.exitCode,
+            };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Unknown error";
+            return { stdout: "", stderr: message, exitCode: 1 };
         }
     },
 });
