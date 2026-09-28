@@ -8,9 +8,10 @@
  *
  * Workshop docs: https://agent-foundations-certification.vercel.app/docs/chat-agent
  */
+import { createAgentUIStreamResponse } from "ai";
+import { shoppingAgent } from "@/lib/agent";
 
-export const POST = async () =>
-  new Response(
-    "Not implemented yet — finish the chat-agent workshop step to enable this route.",
-    { status: 501 },
-  );
+export const POST = async (req: Request) => {
+  const { messages } = await req.json();
+  return createAgentUIStreamResponse({ agent: shoppingAgent, uiMessages: messages });
+};
