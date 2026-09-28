@@ -1,23 +1,18 @@
 import { Sandbox } from "@vercel/sandbox";
 
-export const SANDBOX_NAME = "admin-agent";
+export const SANDBOX_NAME = "admin-agent-sandbox";
 
-/** Returns the named sandbox, creating it on first call. */
-export async function getSandbox(): Promise<Sandbox> {
-  return Sandbox.getOrCreate({
-    name: SANDBOX_NAME,
-    snapshotExpiration: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
-    timeout: 45 * 60 * 1000,                       // 45 min max run time in ms
-  });
-}
-
-/** Reads memories.md from the sandbox filesystem. Returns null if the file doesn't exist yet. */
-export async function readMemories(): Promise<string | null> {
+export const createOrGetSandbox = async (name: string) => {
   try {
-    const sandbox = await getSandbox();
-    const result = await sandbox.readFileToBuffer({ path: "memories.md" });
-    return result ? new TextDecoder().decode(result) : null;
+    const sandbox = await Sandbox.get({ name });
+    return sandbox;
   } catch {
-    return null;
+    const sandbox = await Sandbox.create({
+      name,
+      // persistent: true is the beta default; auto-snapshots on stop, auto-resumes on next get
+      snapshotExpiration: 7 * 24 * 60 * 60 * 1000, // 7 days
+      timeout: 2700000, // 45 minutes
+    });
+    return sandbox;
   }
-}
+};

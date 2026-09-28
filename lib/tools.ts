@@ -1,9 +1,9 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { ApiRequestError, createReturn, getBackOfficeReturns, getBackOfficeSales, getBackOfficeStock, getBackOfficeSupportTickets, getCategories, getOrder, getProductById, getProductStock, getProducts, preauthorizeRefund, notifyReturnInProcess } from "@/lib/api";
 import { start } from "workflow/api";
 import { returnFlow } from "./workflows/return-flow";
-import { ApiRequestError, createReturn, getBackOfficeReturns, getBackOfficeSales, getBackOfficeStock, getBackOfficeSupportTickets, getCategories, getOrder, getProductById, getProductStock, getProducts, preauthorizeRefund, notifyReturnInProcess } from "@/lib/api";
-import { getSandbox } from "@/lib/sandbox";
+import { createOrGetSandbox, SANDBOX_NAME } from "@/lib/sandbox";
 
 export const searchProducts = tool({
     description: `Search the Vercel swag store product catalog. Use this whenever the user asks about products, what the store sells, or wants recommendations. Optionally narrow results to a single category.`,
@@ -50,45 +50,6 @@ export const searchProducts = tool({
     },
 });
 
-export const getProductDetails = tool({
-    description: `Fetch full details for a single product by its ID or slug. Use this when the user asks about a specific product — e.g. "tell me more about the black hoodie", "what sizes does the Vercel cap come in?", "is the water bottle in stock?". Prefer this over searchProducts when you already have a product ID or slug from a previous search result.`,
-    inputSchema: z.object({
-        idOrSlug: z
-            .string()
-            .describe(
-                `The product's ID or URL slug, e.g. "vercel-black-hoodie" or "prod_abc123". Use the slug or ID from a prior searchProducts result when available.`,
-            ),
-    }),
-    execute: async ({ idOrSlug }) => {
-        "use step";
-        try {
-            const [product, stock] = await Promise.all([
-                getProductById(idOrSlug),
-                getProductStock(idOrSlug),
-            ]);
-            return {
-                id: product.id,
-                name: product.name,
-                slug: product.slug,
-                description: product.description,
-                price: product.price,
-                currency: product.currency,
-                category: product.category,
-                images: product.images,
-                tags: product.tags,
-                featured: product.featured,
-                stock: stock.stock,
-                inStock: stock.inStock,
-                lowStock: stock.lowStock,
-            };
-        } catch (err) {
-            const message =
-                err instanceof ApiRequestError ? err.message : "Unknown error";
-            return { error: message };
-        }
-    },
-});
-
 export const getAllCategories = tool({
     description: `List every product category available in the Vercel swag store, along with the number of products in each. Use this when the user asks what categories exist, what kinds of products are sold, or wants to browse the store at a high level.`,
     inputSchema: z.object({}),
@@ -128,6 +89,45 @@ export const returnOrder = tool({
         "use step";
         const run = await start(returnFlow, [orderId, reason]);
         return { runId: run.runId, message: `Return request received for order ${orderId}.` };
+    },
+});
+
+export const getProductDetails = tool({
+    description: `Fetch the full details for a single product by its ID or slug, including every image, the full description, price, tags, and live stock levels. Use this when the user asks about a specific item (e.g. "tell me more about the black hoodie") — prefer it over searchProducts once you know which product they mean, since searchProducts only returns a summary.`,
+    inputSchema: z.object({
+        productId: z
+            .string()
+            .describe(
+                "The product's ID or slug, as returned by searchProducts (the id or slug field).",
+            ),
+    }),
+    execute: async ({ productId }) => {
+        "use step";
+        try {
+            const [product, stock] = await Promise.all([
+                getProductById(productId),
+                getProductStock(productId),
+            ]);
+            return {
+                id: product.id,
+                name: product.name,
+                slug: product.slug,
+                description: product.description,
+                price: product.price,
+                currency: product.currency,
+                category: product.category,
+                images: product.images,
+                tags: product.tags,
+                featured: product.featured,
+                stock: stock.stock,
+                inStock: stock.inStock,
+                lowStock: stock.lowStock,
+            };
+        } catch (err) {
+            const message =
+                err instanceof ApiRequestError ? err.message : "Unknown error";
+            return { error: message };
+        }
     },
 });
 
@@ -194,6 +194,7 @@ export const getSupportTickets = tool({
         }
     },
 });
+
 export const getReturnsHistory = tool({
     description: `List historical returns from the back office within a date range. Each entry includes the items returned, the decision (approved/rejected/needs_info), refund amount in cents (divide by 100 for dollar amounts in your reply), and a summary of the related order. Use this for return triage, refund auditing, or identifying products with high return volumes. History covers ~last 180 days. Summarize across the returned rows in your reply rather than dumping them; for more than ~10 rows of arithmetic, note that exact joins and aggregates are limited until a sandbox tool is added.`,
     inputSchema: z.object({
@@ -229,6 +230,7 @@ export const getReturnsHistory = tool({
         }
     },
 });
+
 export const getInventoryStock = tool({
     description: `Current stock levels for all products (or a subset). Results are sorted by stock ascending, so out-of-stock and low-stock items appear first. Use this to answer questions about availability, restocking priorities, or which items are about to run out. Summarize the rows in your reply rather than dumping them.`,
     inputSchema: z.object({
@@ -267,6 +269,7 @@ export const getInventoryStock = tool({
         }
     },
 });
+
 export const getSalesAnalytics = tool({
     description: `Sales totals by product within a date range. Each row reports unitsSold, ordersCount, and revenue in cents (divide by 100 for dollar amounts in your reply). Results are sorted by unitsSold descending. Pair with getReturnsHistory to compute per-product return rates. Sales data covers ~last 180 days. Summarize across the rows in your reply rather than dumping them; for more than ~10 rows of arithmetic, note that exact joins and aggregates are limited until a sandbox tool is added.`,
     inputSchema: z.object({
@@ -299,53 +302,18 @@ export const getSalesAnalytics = tool({
 });
 
 export const bash = tool({
-    description: `Run a SHELL command in a persistent sandbox. The command is executed by bash,
-so it must be valid shell syntax — NOT raw Python code.
-
-Use this for multi-step computation: aggregations, ratio calculations, joining data
-across multiple tool results, or anything involving more than ~10 rows of arithmetic.
-
-CORRECT usage — always wrap Python in a heredoc and invoke python3:
-
-  python3 << 'EOF'
-  import json
-  data = [1, 2, 3]
-  print(sum(data))
-  EOF
-
-Or write to a file first, then run it:
-
-  cat > /tmp/script.py << 'EOF'
-  import json
-  # your code here
-  EOF
-  python3 /tmp/script.py
-
-WRONG — do NOT pass raw Python as the command:
-
-  import json   ← this is NOT a shell command, bash will fail
-
-Rules:
-- Always use python3 (never python)
-- Standard library only — no pip installs
-- All API currency values are in cents — divide by 100 for dollar amounts
-- Print a clean, human-readable result`,
+    description: "Run a bash command in the sandbox environment",
     inputSchema: z.object({
-        command: z.string().describe("A valid bash shell command — NOT raw Python code. Wrap Python in a heredoc: python3 << 'EOF' ... EOF"),
+        command: z.string().describe("The bash command to run"),
     }),
     execute: async ({ command }) => {
         "use step";
-        try {
-            const sandbox = await getSandbox();
-            const result = await sandbox.runCommand("bash", ["-lc", command]);
-            return {
-                stdout: result.stdout,
-                stderr: result.stderr,
-                exitCode: result.exitCode,
-            };
-        } catch (err) {
-            const message = err instanceof Error ? err.message : "Unknown error";
-            return { stdout: "", stderr: message, exitCode: 1 };
-        }
+        const sandbox = await createOrGetSandbox(SANDBOX_NAME);
+        const result = await sandbox.runCommand("bash", ["-lc", command]);
+        return {
+            stdout: await result.stdout(),
+            stderr: await result.stderr(),
+            exitCode: result.exitCode,
+        };
     },
 });
