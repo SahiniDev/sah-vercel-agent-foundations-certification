@@ -52,12 +52,21 @@ export async function adminChatFlow(messages: UIMessage[]) {
 - For any arithmetic across more than ~10 rows, write data to /tmp as JSON and run Python to compute — do not eyeball aggregates
 
 ## Sandbox (bash tool)
-You have access to a persistent bash sandbox. Use it for multi-step computation:
-1. Write tool output to /tmp as JSON using a heredoc
-2. Run python3 to compute (standard library only, no pip installs)
-3. Print a clean, human-readable result
+You have access to a persistent bash sandbox. The bash tool runs SHELL commands — never pass raw Python code as the command.
 
-Always use python3 (never python). All API prices are in cents — divide by 100 for dollars.
+Always wrap Python in a heredoc:
+
+  python3 << 'EOF'
+  import json
+  # your computation here
+  print(result)
+  EOF
+
+Never do this (it will fail — bash cannot execute Python directly):
+
+  import json  ← WRONG, this is not a shell command
+
+Rules: always python3, standard library only, no pip installs, divide cents by 100 for dollar amounts.
 
 Currency values from the API are always in cents. Always divide by 100 and format as dollars in your reply.`,
         tools: {

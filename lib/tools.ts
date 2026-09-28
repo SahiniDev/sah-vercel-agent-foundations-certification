@@ -299,20 +299,39 @@ export const getSalesAnalytics = tool({
 });
 
 export const bash = tool({
-    description: `Run a shell command in a persistent sandbox environment. Use this for
-multi-step computation that would be unreliable to do by reasoning alone — aggregations,
-ratio calculations, joining data across multiple tool results, or anything involving more
-than ~10 rows of arithmetic.
+    description: `Run a SHELL command in a persistent sandbox. The command is executed by bash,
+so it must be valid shell syntax — NOT raw Python code.
 
-Workflow:
-1. Write data to /tmp as JSON using a heredoc (e.g. echo '...' > /tmp/data.json)
-2. Run a Python script to compute the result (always use python3, never python)
-3. Print a clean, human-readable result
+Use this for multi-step computation: aggregations, ratio calculations, joining data
+across multiple tool results, or anything involving more than ~10 rows of arithmetic.
 
-All currency values from the API are in cents — divide by 100 for dollar amounts.
-Standard library only; no pip installs.`,
+CORRECT usage — always wrap Python in a heredoc and invoke python3:
+
+  python3 << 'EOF'
+  import json
+  data = [1, 2, 3]
+  print(sum(data))
+  EOF
+
+Or write to a file first, then run it:
+
+  cat > /tmp/script.py << 'EOF'
+  import json
+  # your code here
+  EOF
+  python3 /tmp/script.py
+
+WRONG — do NOT pass raw Python as the command:
+
+  import json   ← this is NOT a shell command, bash will fail
+
+Rules:
+- Always use python3 (never python)
+- Standard library only — no pip installs
+- All API currency values are in cents — divide by 100 for dollar amounts
+- Print a clean, human-readable result`,
     inputSchema: z.object({
-        command: z.string().describe("The shell command to execute in the sandbox"),
+        command: z.string().describe("A valid bash shell command — NOT raw Python code. Wrap Python in a heredoc: python3 << 'EOF' ... EOF"),
     }),
     execute: async ({ command }) => {
         "use step";
