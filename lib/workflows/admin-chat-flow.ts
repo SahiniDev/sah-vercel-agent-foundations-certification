@@ -14,6 +14,13 @@ import {
     searchProducts,
     getAllCategories,
 } from "@/lib/tools";
+import { createOrGetSandbox, SANDBOX_NAME } from "@/lib/sandbox";
+
+async function readMemories() {
+    const sandbox = await createOrGetSandbox(SANDBOX_NAME);
+    const buffer = await sandbox.readFileToBuffer({ path: "memories.md" });
+    return buffer ? new TextDecoder().decode(buffer) : null;
+}
 
 export const backOfficeInstructions = `You are the back-office assistant for the Vercel swag store. You have read-only access to returns, inventory, sales, and support tickets through tools, and a persistent bash sandbox for computation.
 
@@ -36,10 +43,45 @@ export async function adminChatFlow(messages: UIMessage[]) {
     "use workflow";
 
     const modelMessages = await convertToModelMessages(messages);
+    const memories = await readMemories();
+
+    const instructions = [
+        backOfficeInstructions,
+
+        "## Memory protocol",
+        memories
+            ? `## Current memories\n\n${memories}`
+            : "No memories yet.",
+
+        `## Priority order for any request
+1. Check "## Scripts for common tasks" in memory — if a script matches, run it with bash.
+2. Otherwise use data tools and bash to compute the answer.
+3. If the task is likely to recur, save a reusable Python script to /vercel/sandbox/scripts/<name>.py and log it in memory under "## Scripts for common tasks" with a one-line description.`,
+
+        `## When to save to memory
+Save to memories.md when the user shares something that should persist across sessions:
+- Presentation preferences (e.g. "show as percentages", "terse replies only")
+- Business context not derivable from data (e.g. "Q4 is always high-return season")
+- Explanations for past anomalies so you don't re-flag them
+- Corrections or feedback on prior answers
+
+Do NOT save routine questions, one-off lookups, or anything you can re-derive from the data tools.`,
+
+        `## How to save memory
+Append a timestamped note with bash:
+  echo "$(date): <note>" >> memories.md
+
+## How to save a reusable script
+Write it to /vercel/sandbox/scripts/<name>.py (stdlib only, well-commented), then log it:
+  echo "$(date): <name>.py — <one-line description>" >> memories.md`,
+
+        `## How to use memory
+Read the current memories above so prior context shapes your reply — apply saved preferences automatically without asking the user to repeat themselves.`,
+    ].join("\n\n");
 
     const agent = new DurableAgent({
         model: "anthropic/claude-sonnet-4.6",
-        instructions: backOfficeInstructions,
+        instructions,
         tools: {
             bash,
             getReturnsHistory,
