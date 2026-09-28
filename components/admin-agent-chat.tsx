@@ -54,6 +54,11 @@ export function AdminAgentChat() {
         return { ...rest, api: `/api/admin/chat/${encodeURIComponent(runId)}/stream` };
       },
     }),
+    onError: () => {
+      // Clear a stale run ID so the next message starts a fresh run
+      // instead of repeatedly trying to reconnect to a dead run.
+      localStorage.removeItem(RUN_ID_KEY);
+    },
   });
 
   const handleSubmit = (_message: PromptInputMessage) => {
